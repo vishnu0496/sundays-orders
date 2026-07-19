@@ -202,6 +202,7 @@
       <button class="nav-item" data-page="customers">Customers</button>
       <button class="nav-item" data-page="pnl">P&amp;L</button>
       <div class="nav-sep"></div>
+      <button class="nav-item" id="navCosts">Unlock costs</button>
       <button class="nav-item" id="exportBtn">Backup (JSON)</button>
       <button class="nav-item" id="importBtn">Restore</button>
       <input type="file" id="importFile" accept="application/json" style="display:none" />
@@ -252,6 +253,18 @@
       <div id="payQrWrap"><img id="payQr" alt="UPI QR" /></div>
       <div class="phonepe" id="payPhonePe" style="display:none"></div>
       <button class="btn block ghost" style="margin-top:12px" onclick="closePay()">Close</button>
+    </div>
+  </div>
+
+  <!-- PIN unlock modal -->
+  <div class="modal" id="pinModal">
+    <div class="modal-box">
+      <h3>Unlock cost data</h3>
+      <p style="font-size:13px;color:var(--muted);margin:4px 0 12px">Enter your PIN to load your private costs &amp; margins on this device. No one else can read them.</p>
+      <input type="password" id="pinInput" placeholder="PIN" autocomplete="off" autocapitalize="off" />
+      <div id="pinErr" style="color:var(--red);font-size:12px;min-height:15px;margin:7px 0"></div>
+      <button class="btn block" id="pinUnlockBtn">Unlock</button>
+      <button class="btn block ghost" style="margin-top:8px" onclick="closePin()">Cancel</button>
     </div>
   </div>
 
@@ -601,6 +614,20 @@
     const orderCost = (o) => (o.items || []).reduce((s, it) => s + costOf(it.id) * Number(it.qty), 0);
     const orderProfit = (o) => o.total - orderCost(o);
     const monthlyOverhead = () => Number(localStorage.getItem(OVERHEAD_KEY) || 0);
+
+    // Private costs travel encrypted INSIDE this page — only your PIN decrypts them (AES-GCM + PBKDF2).
+    // The public source shows only this scrambled blob; without the PIN it's useless.
+    const ENCRYPTED_COSTS = "Xuyk6FjCXsyU2RY/bOmsOXhxyMBUvxDA/RvyQRZ04YO/1rI8mwppmWLkxXJ/2w0lCpVxf8yCy9XklYjWdoY8eMvpNP1s/BngvMbJIHNDP/C1I1Y7jZqtxjyy4KtEYivtdOVmjCgjIibAB3E7umnInLNs85PDIBsyTkfHDLjtvzqCxiliSW6lam/xi0di/bGs1ij2N6u9aeOW4MVf9b4UHkabUmdOWThJ5TSsfDaGvLj9ttMv3DS6JOV6cmhbPXgQMP9qeRko/YbH3nLyk0homfOqAdsBEPUZxQe//i5MRfvaPTTMxddv2aFzWwSfYHiCvIQvF6lzDmmemsB4fPvGONlx6vp/UmSL0cwEbzVglzDbDOmJQy8B0sFEWnr528p7M9qg0P2pjOe9RKzQteElW4JXd4uEvJiv6YCmLRhPLWdusZUPbBVerLSorUzLYjnkaEHbO3yQviyIFwzGRPqsXPb6U9LuF6ixXr1LDnS+UqSkupB7Xp69mhBQQutTx+8h+rErblOK+ACrPpadkHjCeFIhst4a72jiDdurIoto5odXqA/DPLb0ayMmipeM9Q002r4sXnVaEinKRzdBKxY2lYngdoPh6fsHGDqNndOexMqNuIOQuyUCq2t/Emkk6g2neaQaTqGl8Q1eCUtjTGzsFnUvIasaQIbk2LK3J30CExRaScPAd2P06Wb6JuYmv+VYEVHo5FgunHWoZZc4rXTySGZ6Yi+q6V8Hk+WW29lowd08I5gNDtTJrWGiPoZEIJpSWcgHhJtWqr2/Yqro05hkL3fTXFMk0bT0YtK9TDggxsCI3G0W+2wr2KwY6G7nZi3vdd6qCQM7W5m6Fx/Uphy+EoPSzCk2XhNBxWqKacVinXx3GIE4ND2uECwEp2boCsP+8xn4osT90lkECLkQ2CsQcmSFob2bxMffr+tZoXzR3J/mVwdza0yDITpgTNwz/I18SpiU/a15Qeoi4dIsGxi53AdjgTQ/xzo6xMHxMOp7y9BffJbkUcDVe7UKJjIIX7lHMVAisupB1GuVcsSE9w2m6KAi/bpewmm7Pr2Y36+YtC+/H3eipt5/PStaFost2m/MJCAjc0Lzttq3CfbX22b60KcUfkAABSuj38+pDR/mwdaOfRBN9svSogVFyiqTmQ==";
+    const costsLocked = () => Object.keys(COSTS).length === 0 && ENCRYPTED_COSTS.length > 20;
+    async function unlockCosts(pin) {
+      const raw = Uint8Array.from(atob(ENCRYPTED_COSTS), (c) => c.charCodeAt(0));
+      const salt = raw.slice(0, 16), iv = raw.slice(16, 28), data = raw.slice(28);
+      const km = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveKey"]);
+      const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, km, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data); // throws on wrong PIN
+      localStorage.setItem(COST_KEY, new TextDecoder().decode(plain));
+      COSTS = loadCosts();
+    }
 
     function renderCatalog() {
       const q = $("search").value.trim().toLowerCase();
@@ -985,10 +1012,26 @@
         else if (page === "customers") activeFilter = "customers";
         else if (page === "pnl") activeFilter = "pnl";
         renderBoard();
+        if (page === "pnl" && costsLocked()) openPin();
       }
       closeDrawer();
       window.scrollTo(0, 0);
     }
+
+    /* ---------- cost lock/unlock ---------- */
+    function updateCostNav() {
+      const el = $("navCosts"); if (!el) return;
+      el.innerHTML = icon("wallet") + (costsLocked() ? " Unlock costs" : " Lock costs");
+    }
+    function openPin() { $("pinErr").textContent = ""; $("pinInput").value = ""; $("pinModal").classList.add("open"); setTimeout(() => $("pinInput").focus(), 60); }
+    function closePin() { $("pinModal").classList.remove("open"); }
+    async function doUnlock() {
+      const pin = $("pinInput").value.trim();
+      if (!pin) return;
+      try { await unlockCosts(pin); closePin(); updateCostNav(); renderBoard(); showToast("Costs unlocked"); }
+      catch { $("pinErr").textContent = "Wrong PIN — try again."; }
+    }
+    function lockCosts() { localStorage.removeItem(COST_KEY); COSTS = loadCosts(); updateCostNav(); renderBoard(); showToast("Costs locked on this device"); }
 
     /* ---------- events ---------- */
     $("menuBtn").addEventListener("click", openDrawer);
@@ -997,8 +1040,12 @@
       if (e.target.id === "drawer") { closeDrawer(); return; }
       const nav = e.target.closest(".nav-item[data-page]");
       if (nav) showPage(nav.dataset.page);
+      else if (e.target.closest("#navCosts")) { closeDrawer(); costsLocked() ? openPin() : lockCosts(); }
       else if (e.target.closest("#exportBtn, #importBtn")) closeDrawer();
     });
+    $("pinUnlockBtn").addEventListener("click", doUnlock);
+    $("pinInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doUnlock(); });
+    $("pinModal").addEventListener("click", (e) => { if (e.target.id === "pinModal") closePin(); });
     $("catalog").addEventListener("click", (e) => {
       const t = e.target.closest("[data-inc],[data-dec]"); if (!t) return;
       const inc = t.dataset.inc, dec = t.dataset.dec;
@@ -1081,6 +1128,7 @@
     $("fab").innerHTML = icon("plus") + " New Order";
     const NAVIC = { new: "plus", orders: "list", customers: "user", pnl: "chart" };
     document.querySelectorAll(".nav-item[data-page]").forEach((b) => { b.innerHTML = icon(NAVIC[b.dataset.page]) + " " + b.textContent.trim(); });
+    updateCostNav();
     renderCatalog();
     showPage("orders");
     if (location.hash === "#selftest") selftest();

@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 *.docx
 sundays-private-costs.json
+encrypt-costs.cjs
+_blob.txt
+_*.js
