@@ -589,26 +589,8 @@
     /* ---------- cost / margin engine (seeded from SUNDAYS_Master_Product_Costing) ---------- */
     // Cost PRICE per SKU (ingredients + packaging + batch overhead already folded in, per the doc).
     // Some marked *est* where the doc gave a range or didn't list the exact SKU — editable via P&L screen.
-    const COST_SEED = {
-      "tub-nutella": 242,
-      "cashew-peri-250g": 313, "cashew-peri-500g": 625, "cashew-peri-1kg": 1250,
-      "cashew-chilli-250g": 306, "cashew-chilli-500g": 613, "cashew-chilli-1kg": 1225,
-      "cashew-plain-250g": 283, "cashew-plain-500g": 565, "cashew-plain-1kg": 1130, // est (landed raw + pack, no seasoning)
-      "laddu-dryfruit-500g": 239, "laddu-dryfruit-1kg": 478,
-      "laddu-jaggery-500g": 137, "laddu-jaggery-1kg": 273,
-      "laddu-ragi-500g": 185, "laddu-ragi-1kg": 370,
-      "laddu-sununda-500g": 190, "laddu-sununda-1kg": 379,
-      "laddu-puff-12pcs": 60,
-      "cookie-trio-doublechoc": 110, "cookie-trio-oreo": 110,
-      "cookie-dozen-doublechoc": 160, "cookie-dozen-oreo": 160,
-      "cookie-chocchip-12box": 100, "cookie-chocchip-24box": 180, // 24 est
-      "cookie-atta-12box": 112, "cookie-atta-24box": 172,
-      "combo-starter": 160,
-      "combo-giftbox": 230, // est (6 big + 12 mini)
-      "combo-fullsunday": 255,
-      "snack-chakodi-500g": 220, "snack-chakodi-1kg": 440,
-      "snack-boondi-500g": 273, "snack-boondi-1kg": 545
-    };
+    // Cost prices are PRIVATE — not shipped in this (public) file. Load yours once via menu → Restore.
+    const COST_SEED = {};
     const COST_KEY = "sundays.costs.v1", OVERHEAD_KEY = "sundays.overhead.v1";
     let COSTS = loadCosts();               // seed merged with any user edits
     function loadCosts() {
@@ -956,7 +938,7 @@
     }
 
     function exportBackup() {
-      const data = JSON.stringify({ orders: orders, counter: localStorage.getItem(COUNTER_KEY) || "0" }, null, 2);
+      const data = JSON.stringify({ orders: orders, counter: localStorage.getItem(COUNTER_KEY) || "0", costs: COSTS, overhead: localStorage.getItem(OVERHEAD_KEY) || "0" }, null, 2);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
       a.download = "sundays-orders-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -968,11 +950,20 @@
       reader.onload = () => {
         try {
           const data = JSON.parse(reader.result);
-          if (!Array.isArray(data.orders)) throw new Error("bad file");
-          if (!confirm("Restore " + data.orders.length + " orders? This REPLACES all current orders.")) return;
-          orders = data.orders;
-          if (data.counter) localStorage.setItem(COUNTER_KEY, String(data.counter));
-          save(); renderBoard(); showToast("Restored " + orders.length + " orders");
+          const hasOrders = Array.isArray(data.orders) && data.orders.length > 0;
+          if (!hasOrders && !data.costs) throw new Error("bad file");
+          // costs/overhead restore without touching existing orders (safe to re-run)
+          if (data.costs) { localStorage.setItem(COST_KEY, JSON.stringify(data.costs)); COSTS = loadCosts(); }
+          if (data.overhead != null) localStorage.setItem(OVERHEAD_KEY, String(data.overhead));
+          if (hasOrders) {
+            if (confirm("Restore " + data.orders.length + " orders? This REPLACES all current orders.")) {
+              orders = data.orders;
+              if (data.counter) localStorage.setItem(COUNTER_KEY, String(data.counter));
+              save();
+            }
+          }
+          renderBoard();
+          showToast(hasOrders ? "Restored " + data.orders.length + " orders" : "Costs restored");
         } catch { showToast("Invalid backup file"); }
       };
       reader.readAsText(file);
@@ -1073,7 +1064,7 @@
       console.assert(cust.length === 1, "customer grouping failed");
       console.assert(cust[0].count === 2 && cust[0].spent === 1200, "customer totals failed");
       console.assert(cust[0].fav === "Nutella Tub", "customer favourite failed");
-      console.assert(costOf("cashew-peri-250g") === 313, "cost seed failed");
+      COSTS["cashew-peri-1kg"] = 1250; // costs are private/imported now, inject for the check
       console.assert(orderProfit({ total: 1699, items: [{ id: "cashew-peri-1kg", qty: 1 }] }) === 449, "orderProfit failed");
       orders = saved;
       console.log("selftest done — check for assertion errors above");
